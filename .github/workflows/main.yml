@@ -1,0 +1,317 @@
+         New-Item -ItemType Directory -Force -Path "D:\storage" | Out-Null
+
+     # ─────────────────────────────────────────────
+      # 2. INSTALAR MESA3D (OpenGL SOFTWARE RENDERER)
+      # ─────────────────────────────────────────────
+      - name: Install Mesa3D OpenGL (Software GPU)
+        run: |
+          $mesaUrl = "https://github.com/pal1000/mesa-dist-win/releases/download/24.3.4/mesa3d-24.3.4-release-mingw.7z"
+          $sevenZipUrl = "https://www.7-zip.org/a/7zr.exe"
+          
+          Invoke-WebRequest -Uri $sevenZipUrl -OutFile "$env:TEMP\7zr.exe" -UseBasicParsing
+          
+          Write-Host "Downloading Mesa3D..." -ForegroundColor Cyan
+          Invoke-WebRequest -Uri $mesaUrl -OutFile "$env:TEMP\mesa3d.7z" -UseBasicParsing
+          
+          $mesaDir = "C:\mesa3d"
+          New-Item -ItemType Directory -Force -Path $mesaDir | Out-Null
+          & "$env:TEMP\7zr.exe" x "$env:TEMP\mesa3d.7z" -o"$mesaDir" -y | Out-Null
+          
+          $installScript = Get-ChildItem -Path $mesaDir -Filter "systemwidedeploy.cmd" -Recurse | Select-Object -First 1
+          if ($installScript) {
+            Write-Host "Installing Mesa3D system-wide..." -ForegroundColor Cyan
+            & cmd /c "`"$($installScript.FullName)`" x64"
+          } else {
+            $x64dir = Get-ChildItem -Path $mesaDir -Filter "x64" -Recurse -Directory | Select-Object -First 1
+            if ($x64dir) {
+              Copy-Item "$($x64dir.FullName)\opengl32.dll" "C:\Windows\System32\" -Force
+              Copy-Item "$($x64dir.FullName)\*.dll" "C:\Windows\System32\" -Force -ErrorAction SilentlyContinue
+            }
+          }
+          
+          $openglDll = Test-Path "C:\Windows\System32\opengl32.dll"
+          Write-Host "OpenGL DLL present: $openglDll" -ForegroundColor Green
+          
+          $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          Invoke-WebRequest -Uri $vcUrl -OutFile "$env:TEMP\vc_redist.x64.exe" -UseBasicParsing
+          Start-Process "$env:TEMP\vc_redist.x64.exe" -ArgumentList "/quiet", "/norestart" -Wait
+          
+          Write-Host "Mesa3D (software OpenGL) installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 3. INSTALAR NODE.JS + NPM
+      # ─────────────────────────────────────────────
+      - name: Install Node.js LTS (with npm)
+        run: |
+          Write-Host "=== Installing Node.js LTS ===" -ForegroundColor Cyan
+          $nodeUrl = "https://nodejs.org/dist/v22.15.0/node-v22.15.0-x64.msi"
+          $installer = "$env:TEMP\nodejs_installer.msi"
+          
+          Invoke-WebRequest -Uri $nodeUrl -OutFile $installer -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installer`"", "/quiet", "/norestart", "ALLUSERS=1" -Wait
+          
+          # Refrescar PATH completo desde el registro
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          
+          node --version
+          npm --version
+          Write-Host "Node.js + npm installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 4. INSTALAR PYTHON + PIP
+      # ─────────────────────────────────────────────
+      - name: Install Python
+        run: |
+          Write-Host "=== Installing Python ===" -ForegroundColor Cyan
+          $pythonUrl = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
+          $installer = "$env:TEMP\python_installer.exe"
+          
+          Invoke-WebRequest -Uri $pythonUrl -OutFile $installer -UseBasicParsing
+          
+          # Instalar Python: TODOS los usuarios, añadir al PATH, incluir pip, SIN alias de Windows Store
+          Start-Process $installer -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1", "Include_test=0", "Include_launcher=0" -Wait
+          
+          # Refrescar PATH desde el registro
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          
+          # Desactivar alias de Microsoft Store para python/pip (Windows 10/11)
+          Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps\python*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WindowsApps\pip*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+          
+          # Usar ruta absoluta para verificar
+          $pythonPath = "C:\Program Files\Python312\python.exe"
+          $pipPath = "C:\Program Files\Python312\Scripts\pip.exe"
+          
+          if (Test-Path $pythonPath) {
+            & $pythonPath --version
+          } else {
+            # Buscar python en PATH
+            $py = Get-Command python -ErrorAction SilentlyContinue
+            if ($py) { & $py.Source --version } else { Write-Warning "Python not found in PATH" }
+          }
+          
+          if (Test-Path $pipPath) {
+            & $pipPath --version
+          } else {
+            # Intentar con python -m pip
+            if (Test-Path $pythonPath) {
+              & $pythonPath -m pip --version
+            }
+          }
+          
+          Write-Host "Python installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 5. INSTALAR GIT
+      # ─────────────────────────────────────────────
+      - name: Install Git for Windows
+        run: |
+          Write-Host "=== Installing Git ===" -ForegroundColor Cyan
+          $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
+          $installer = "$env:TEMP\git_installer.exe"
+          
+          Invoke-WebRequest -Uri $gitUrl -OutFile $installer -UseBasicParsing
+          
+          Start-Process $installer -ArgumentList '/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', '/COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh"', '/o:PathOption=CmdTools', '/o:DefaultBranchOption=main' -Wait
+          
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          
+          git --version
+          Write-Host "Git installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 6. INSTALAR STEAM
+      # ─────────────────────────────────────────────
+      - name: Install Steam
+        run: |
+          Write-Host "=== Installing Steam ===" -ForegroundColor Cyan
+          $steamUrl = "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe"
+          $installer = "$env:TEMP\SteamSetup.exe"
+          
+          Invoke-WebRequest -Uri $steamUrl -OutFile $installer -UseBasicParsing
+          Start-Process $installer -ArgumentList "/S", "/D=C:\Steam" -Wait
+          Start-Sleep -Seconds 15
+          
+          New-Item -ItemType Directory -Force -Path "C:\Steam\steamapps\common" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\Steam\steamapps\downloading" | Out-Null
+          
+          $libraryFile = "C:\Steam\steamapps\libraryfolders.vdf"
+          @"
+          "LibraryFolders"
+          {
+            "TimeNextStatsReport"    "0"
+            "ContentStatsID"        "-1"
+            "1"        "D:\\SteamLibrary"
+          }
+          "@ | Out-File -FilePath $libraryFile -Encoding UTF8 -Force
+          
+          New-Item -ItemType Directory -Force -Path "D:\SteamLibrary\steamapps" | Out-Null
+          
+          $steamExe = "C:\Steam\Steam.exe"
+          if (Test-Path $steamExe) {
+            Write-Host "Steam installed at: $steamExe" -ForegroundColor Green
+          } else {
+            Write-Warning "Steam path not found, searching..."
+            Get-ChildItem -Path "C:\" -Filter "Steam.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+          }
+          
+          Write-Host "Steam installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 7. INSTALAR OPENCODE-AI (via npm)
+      # ─────────────────────────────────────────────
+      - name: Install OpenCode AI (npm global)
+        run: |
+          Write-Host "=== Installing OpenCode AI ===" -ForegroundColor Cyan
+          
+          npm --version
+          
+          npm install -g opencode-ai@latest
+          
+          # Refrescar PATH y añadir npm global bin
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          $npmPrefix = & npm config get prefix
+          $npmBin = "$npmPrefix"
+          if (Test-Path "$npmPrefix\bin") { $npmBin = "$npmPrefix\bin" }
+          [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$npmBin", "Machine")
+          $env:Path += ";$npmBin"
+          
+          opencode --version
+          Write-Host "OpenCode AI installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 8. INSTALAR OPERA GX
+      # ─────────────────────────────────────────────
+      - name: Install Opera GX
+        run: |
+          Write-Host "=== Installing Opera GX ===" -ForegroundColor Cyan
+          $operaUrl = "https://net.geo.opera.com/opera_gx/stable/windows"
+          $installer = "$env:TEMP\OperaGXSetup.exe"
+          
+          Invoke-WebRequest -Uri $operaUrl -OutFile $installer -UseBasicParsing
+          
+          Start-Process $installer -ArgumentList "/silent", "/allusers=1", "/launchopera=0", "/setdefaultbrowser=0", "/desktopshortcut=0", "/enable-stats=0", "/enable-installer-stats=0" -Wait
+          
+          $operaPath = "${env:ProgramFiles}\Opera GX\launcher.exe"
+          if (Test-Path $operaPath) {
+            Write-Host "Opera GX installed at: $operaPath" -ForegroundColor Green
+          } else {
+            Write-Warning "Opera GX installation path not found, checking alternatives..."
+            Get-ChildItem -Path "${env:ProgramFiles}" -Filter "*opera*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
+          }
+          
+          Write-Host "Opera GX installed successfully" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 9. CONFIGURAR RDP
+      # 3. CONFIGURAR RDP
+# ─────────────────────────────────────────────
+- name: Configure RDP Settings
+run: |
+@@ -275,7 +73,7 @@ jobs:
+         Write-Host "RDP configured." -ForegroundColor Green
+
+     # ─────────────────────────────────────────────
+      # 10. CREAR USUARIO RDP
+      # 4. CREAR USUARIO RDP
+# ─────────────────────────────────────────────
+- name: Create RDP User
+run: |
+@@ -305,7 +103,7 @@ jobs:
+         Write-Host "RDP user created." -ForegroundColor Green
+
+     # ─────────────────────────────────────────────
+      # 11. INSTALAR TAILSCALE
+      # 5. INSTALAR TAILSCALE
+# ─────────────────────────────────────────────
+- name: Install Tailscale
+run: |
+@@ -316,7 +114,7 @@ jobs:
+         Remove-Item $installer -Force
+
+     # ─────────────────────────────────────────────
+      # 12. CONECTAR TAILSCALE
+      # 6. CONECTAR TAILSCALE
+# ─────────────────────────────────────────────
+- name: Connect Tailscale
+run: |
+@@ -336,7 +134,7 @@ jobs:
+         Write-Host "Tailscale IP: $tsIP" -ForegroundColor Green
+
+     # ─────────────────────────────────────────────
+      # 13. VERIFICAR RDP
+      # 7. VERIFICAR RDP
+# ─────────────────────────────────────────────
+- name: Verify RDP
+run: |
+@@ -347,7 +145,7 @@ jobs:
+         Write-Host "RDP reachable on port 3389 ✓" -ForegroundColor Green
+
+     # ─────────────────────────────────────────────
+      # 14. VERIFICAR APLICACIONES INSTALADAS
+      # 8. VERIFICAR APLICACIONES INSTALADAS
+# ─────────────────────────────────────────────
+- name: Verify Installed Apps
+run: |
+@@ -362,42 +160,11 @@ jobs:
+         Write-Host "║  NPM:    " -NoNewline
+         try { npm --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+         
+          Write-Host "║  OPENCODE-AI:" -NoNewline
+          try { opencode --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  PYTHON:" -NoNewline
+          try { 
+            $py = Get-Command python -ErrorAction SilentlyContinue
+            if ($py) { & $py.Source --version 2>$null; Write-Host " ✓" -ForegroundColor Green }
+            else { Write-Host " ✗" -ForegroundColor Red }
+          } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  PIP:    " -NoNewline
+          try { 
+            $pip = Get-Command pip -ErrorAction SilentlyContinue
+            if ($pip) { & $pip.Source --version 2>$null; Write-Host " ✓" -ForegroundColor Green }
+            else { 
+              $py = Get-Command python -ErrorAction SilentlyContinue
+              if ($py) { & $py.Source -m pip --version 2>$null; Write-Host " ✓ (via python -m pip)" -ForegroundColor Green }
+              else { Write-Host " ✗" -ForegroundColor Red }
+            }
+          } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  GIT:   " -NoNewline
+          try { git --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  FLUTTER:" -NoNewline
+          try { flutter --version 2>$null | Select-Object -First 1; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  OPERA GX:" -NoNewline
+          $operaExe = "${env:ProgramFiles}\Opera GX\launcher.exe"
+          if (Test-Path $operaExe) { Write-Host " ✓" -ForegroundColor Green } else { Write-Host " ✗" -ForegroundColor Red }
+          
+         Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+         Write-Host ""
+
+     # ─────────────────────────────────────────────
+      # 15. MANTENER SESIÓN ACTIVA
+      # 9. MANTENER SESIÓN ACTIVA
+# ─────────────────────────────────────────────
+- name: Keep Alive & Show Credentials
+run: |
+@@ -413,6 +180,14 @@ jobs:
+         Write-Host "║  C: ~16GB (sistema)                              ║"
+         Write-Host "║  D: ~500GB (runner disk)                          ║"
+         Write-Host "║  E: ~400GB (VHD extra)                           ║"
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║  GPU: Mesa3D Software OpenGL 3.x                 ║"
+          Write-Host "║  (permite Minecraft, VSCode, etc.)               ║"
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host ""
+
+          # Mantener la sesión activa
+          $i = 0
+          while ($true) {
+            Start-Sleep -Seconds 60
+            $i++
+            Write-Host "Keep alive... ($i minutos)" -ForegroundColor DarkGray
+          }
+          
